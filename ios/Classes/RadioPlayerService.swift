@@ -12,9 +12,9 @@ import AVKit
 
 /// Manages the AVPlayer instance for streaming radio playback and handles audio session configuration.
 class RadioPlayerService: NSObject {
-    private var player: AVPlayer!
-    var streamTitle: String!
-    var streamUrl: String!
+    private let player: AVPlayer
+    var streamTitle: String?
+    var streamUrl: String?
     var defaultArtwork: UIImage?
     private var metadataHash: String? = nil
 
@@ -26,9 +26,9 @@ class RadioPlayerService: NSObject {
 
     /// Initialization
     override init() {
+        player = AVPlayer()
         super.init()
 
-        player = AVPlayer()
         player.automaticallyWaitsToMinimizeStalling = true
 
         // Adds observers for player properties.
@@ -48,13 +48,14 @@ class RadioPlayerService: NSObject {
 
         commandCenter.playCommand.isEnabled = true
         commandCenter.playCommand.addTarget { [weak self] (event) -> MPRemoteCommandHandlerStatus in
-            self?.play()
-            return .success
+            guard let self = self else { return .commandFailed }
+            return self.playSafely() ? .success : .commandFailed
         }
 
         commandCenter.pauseCommand.isEnabled = true
         commandCenter.pauseCommand.addTarget { [weak self] (event) -> MPRemoteCommandHandlerStatus in
-            self?.pause()
+            guard let self = self else { return .commandFailed }
+            self.pause()
             return .success
         }
 
@@ -85,7 +86,7 @@ class RadioPlayerService: NSObject {
     func setStation(title: String, url: String, imageData: Data?, parseStreamMetadata: Bool, lookupOnlineArtwork: Bool) {
         streamTitle = title
         streamUrl = url
-        defaultArtwork = imageData != nil ? UIImage(data: imageData!) : nil
+        defaultArtwork = imageData.flatMap { UIImage(data: $0) }
 
         // Update properties based on new parameters.
         self.parseStreamMetadata = parseStreamMetadata
@@ -93,15 +94,20 @@ class RadioPlayerService: NSObject {
 
         // Update Now Playing Info with station title initially.
         var nowPlayingInfo: [String: Any] = [
-            MPMediaItemPropertyTitle: streamTitle!,
+            MPMediaItemPropertyTitle: title,
         ]
         if let art = defaultArtwork {
             nowPlayingInfo[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: art.size, requestHandler: { _ in art })
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
 
+        guard let streamUrl = streamUrl, let stationURL = URL(string: streamUrl) else {
+            player.replaceCurrentItem(with: nil)
+            return
+        }
+
         // Create and set the new player item.
-        let playerItem = AVPlayerItem(url: URL(string: streamUrl)!)
+        let playerItem = AVPlayerItem(url: stationURL)
         player.replaceCurrentItem(with: playerItem)
 
         // Set metadata handler.
@@ -154,20 +160,51 @@ class RadioPlayerService: NSObject {
         }
     }
 
-    /// Starts or resumes playback.
-    func play() {
-         // If the player item is nil or has failed, try to set it up again.
-        if player.currentItem == nil || player.currentItem?.isPlaybackBufferEmpty == true || player.currentItem?.status == .failed {
-            setStation(
-                title: streamTitle, 
-                url: streamUrl, 
-                imageData: defaultArtwork?.jpegData(compressionQuality: 1.0), 
-                parseStreamMetadata: parseStreamMetadata, 
-                lookupOnlineArtwork: lookupOnlineArtwork
-            )
+    private func playSafely() -> Bool {
+        guard let title = streamTitle?.nilIfEmpty(),
+              let streamUrl = streamUrl?.nilIfEmpty(),
+              let stationURL = URL(string: streamUrl) else {
+            return false
+        }
+
+        let currentAssetURL = (player.currentItem?.asset as? AVURLAsset)?.url.absoluteString
+        let needsNewItem = player.currentItem == nil
+            || player.currentItem?.status == .failed
+            || player.currentItem?.isPlaybackBufferEmpty == true
+            || currentAssetURL != stationURL.absoluteString
+
+        if needsNewItem {
+            let playerItem = AVPlayerItem(url: stationURL)
+
+            let metaOutput = AVPlayerItemMetadataOutput(identifiers: nil)
+            metaOutput.setDelegate(self, queue: DispatchQueue.main)
+            playerItem.add(metaOutput)
+
+            player.replaceCurrentItem(with: playerItem)
+        }
+
+        var nowPlayingInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+        nowPlayingInfo[MPMediaItemPropertyTitle] = title
+        if let art = defaultArtwork {
+            nowPlayingInfo[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: art.size, requestHandler: { _ in art })
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            print("RadioPlayerSevice: Failed to activate audio session before play: \(error)")
+            return false
         }
 
         player.play()
+        return player.timeControlStatus == .playing || player.rate > 0
+    }
+
+    /// Starts or resumes playback.
+    func play() {
+        _ = playSafely()
     }
 
     /// Pauses playback.
@@ -244,7 +281,7 @@ class RadioPlayerService: NSObject {
                 if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
                     let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
                     if options.contains(.shouldResume) {
-                        play()
+                        _ = playSafely()
                     }
                 }
 
