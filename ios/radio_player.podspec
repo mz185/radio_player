@@ -13,7 +13,7 @@ A Flutter plugin to play streaming audio content with background support and loc
   s.license          = { :type => 'CC-BY-NC-SA-4.0', :file => '../LICENSE' }
   s.author           = { 'Ilia Chirkunov' => 'contact@cheebeez.com' }
   s.source           = { :path => '.' }
-  s.source_files = 'Classes/**/*'
+  s.source_files = 'radio_player/Sources/radio_player/**/*.swift'
   s.dependency 'Flutter'
   s.platform = :ios, '15.0'
 
@@ -21,9 +21,7 @@ A Flutter plugin to play streaming audio content with background support and loc
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386' }
   s.swift_version = '5.0'
 
-  # If your plugin requires a privacy manifest, for example if it uses any
-  # required reason APIs, update the PrivacyInfo.xcprivacy file to describe your
-  # plugin's privacy impact, and then uncomment this line. For more information,
-  # see https://developer.apple.com/documentation/bundleresources/privacy_manifest_files
-  # s.resource_bundles = {'radio_player_privacy' => ['Resources/PrivacyInfo.xcprivacy']}
+  # Kept beside Package.swift so CocoaPods and Swift Package Manager read the
+  # same sources. See https://developer.apple.com/documentation/bundleresources/privacy_manifest_files
+  s.resource_bundles = {'radio_player_privacy' => ['radio_player/Sources/radio_player/PrivacyInfo.xcprivacy']}
 end
